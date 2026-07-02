@@ -7,7 +7,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "seed": "ts-node src/scripts/seed.ts",
-    "seed:test": "ts-node src/scripts/seedTestProject.ts"
+    "seed:test": "ts-node src/scripts/seedTestProject.ts",
+    "briefing": "ts-node src/scripts/generateBriefing.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
