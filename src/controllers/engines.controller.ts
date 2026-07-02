@@ -5,12 +5,33 @@ import { Project } from '../models/Project';
 import { EngineContributionMap } from '../models/EngineContributionMap';
 import { stringSimilarity } from '../utils/similarity';
 
-// Shared helper: how many projects have contributed to a given engine
+// Fix 5: data-driven contributor count based on actual section content
+async function dataContributorCount(engineName: string): Promise<number> {
+  const filterMap: Record<string, Record<string, unknown>> = {
+    'Project Classification Engine': {},
+    'Regulatory Rules Engine': { 'sectionC.0': { $exists: true } },
+    'Indicator Library': { 'sectionB.0': { $exists: true } },
+    'Materiality Engine': { 'sectionD.0': { $exists: true } },
+    'Stakeholder Intelligence Engine': { 'sectionD.0': { $exists: true } },
+    'Decision Support Engine': { 'sectionE.0': { $exists: true } },
+    'Benchmarking Engine': { 'sectionB.0': { $exists: true } },
+    'Reporting Engine': { 'sectionI.0': { $exists: true } },
+  };
+  const filter = filterMap[engineName];
+  if (filter === undefined) return 0;
+  if (!Object.keys(filter).length) return Project.countDocuments();
+  return ProjectTemplate.countDocuments(filter);
+}
+
+// Returns max of attestation-based (Section K) and data-driven counts
 async function engineContributorCount(engineName: string): Promise<number> {
-  const result = await EngineContributionMap.countDocuments({
-    contributions: { $elemMatch: { engine: engineName, contributed: true } },
-  });
-  return result;
+  const [attestation, dataBased] = await Promise.all([
+    EngineContributionMap.countDocuments({
+      contributions: { $elemMatch: { engine: engineName, contributed: true } },
+    }),
+    dataContributorCount(engineName),
+  ]);
+  return Math.max(attestation, dataBased);
 }
 
 // Engine 1: Project Classification
@@ -37,9 +58,10 @@ export async function projectClassification(_req: Request, res: Response, next: 
 }
 
 // Engine 2: Regulatory Rules
+// Fix 1: include Section F evidence cross-reference alongside Section C rules
 export async function regulatoryRules(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const [raw, contributorCount] = await Promise.all([
+    const [raw, evidenceByRegulation, contributorCount] = await Promise.all([
       ProjectTemplate.aggregate([
         { $unwind: '$sectionC' },
         {
@@ -55,9 +77,38 @@ export async function regulatoryRules(_req: Request, res: Response, next: NextFu
         },
         { $sort: { projectCount: -1 } },
       ]),
+      // Fix 1: Section F — evidence expected per regulation
+      ProjectTemplate.aggregate([
+        { $unwind: '$sectionF' },
+        { $match: { 'sectionF.regulationStandard': { $exists: true, $ne: '' } } },
+        {
+          $group: {
+            _id: '$sectionF.regulationStandard',
+            evidenceTypes: { $addToSet: '$sectionF.evidenceType' },
+            formatFrequencies: { $addToSet: '$sectionF.formatFrequency' },
+            totalSubmissions: { $sum: 1 },
+            acceptedCount: { $sum: { $cond: ['$sectionF.acceptedWithoutDispute', 1, 0] } },
+            disputeNotes: {
+              $push: {
+                $cond: [
+                  { $and: [{ $eq: ['$sectionF.acceptedWithoutDispute', false] }, { $ne: ['$sectionF.disputeNotes', ''] }] },
+                  '$sectionF.disputeNotes',
+                  '$$REMOVE',
+                ],
+              },
+            },
+          },
+        },
+        {
+          $addFields: {
+            evidenceTypes: { $filter: { input: '$evidenceTypes', cond: { $ne: ['$$this', ''] } } },
+            formatFrequencies: { $filter: { input: '$formatFrequencies', cond: { $ne: ['$$this', ''] } } },
+          },
+        },
+      ]),
       engineContributorCount('Regulatory Rules Engine'),
     ]);
-    res.json({ rules: raw, contributorCount });
+    res.json({ rules: raw, evidenceByRegulation, contributorCount });
   } catch (err) {
     next(err);
   }
@@ -67,9 +118,6 @@ export async function regulatoryRules(_req: Request, res: Response, next: NextFu
 export async function indicatorLibrary(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { category, projectType } = req.query;
-
-    const matchStage: Record<string, unknown> = {};
-    if (category) matchStage['sectionB.category'] = category;
 
     const [raw, contributorCount] = await Promise.all([
       ProjectTemplate.aggregate([
@@ -103,7 +151,6 @@ export async function indicatorLibrary(req: Request, res: Response, next: NextFu
       engineContributorCount('Indicator Library'),
     ]);
 
-    // Flag duplicates using string similarity
     const withDuplicateFlag = raw.map((entry, idx) => {
       const name = entry['_id']?.indicatorName ?? '';
       const isDuplicate = raw.some((other, otherIdx) => {
@@ -120,9 +167,11 @@ export async function indicatorLibrary(req: Request, res: Response, next: NextFu
 }
 
 // Engine 4: Materiality Engine
+// Fix 3: replace D×B cartesian (inflated projectCount) with proper deduplication;
+//         add G/H context as a parallel query
 export async function materialityEngine(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const [matrix, contributorCount] = await Promise.all([
+    const [matrix, contextByType, contributorCount] = await Promise.all([
       ProjectTemplate.aggregate([
         {
           $lookup: {
@@ -143,14 +192,52 @@ export async function materialityEngine(_req: Request, res: Response, next: Next
               esgCategory: '$sectionB.category',
             },
             materialTopics: { $addToSet: '$sectionB.indicatorName' },
-            projectCount: { $sum: 1 },
+            // Fix 3: collect unique project IDs, not sum of rows
+            projectIds: { $addToSet: '$project' },
           },
         },
+        // Fix 3: derive accurate count from the set
+        { $addFields: { projectCount: { $size: '$projectIds' } } },
+        { $project: { projectIds: 0 } },
         { $sort: { '_id.projectType': 1, '_id.stakeholderGroup': 1 } },
+      ]),
+      // Fix 3: G/H context per project type (spec: MAT built from D+G+H)
+      ProjectTemplate.aggregate([
+        {
+          $lookup: {
+            from: 'projects',
+            localField: 'project',
+            foreignField: '_id',
+            as: 'projectDoc',
+          },
+        },
+        { $unwind: '$projectDoc' },
+        {
+          $group: {
+            _id: '$projectDoc.projectType',
+            envOutcomes: { $push: '$sectionG.outcomesAchieved' },
+            positiveImpacts: { $push: '$sectionH.positiveImpacts' },
+            negativeImpacts: { $push: '$sectionH.negativeImpacts' },
+          },
+        },
+        {
+          $addFields: {
+            envOutcomes: {
+              $filter: { input: '$envOutcomes', cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] } },
+            },
+            positiveImpacts: {
+              $filter: { input: '$positiveImpacts', cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] } },
+            },
+            negativeImpacts: {
+              $filter: { input: '$negativeImpacts', cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] } },
+            },
+          },
+        },
+        { $sort: { _id: 1 } },
       ]),
       engineContributorCount('Materiality Engine'),
     ]);
-    res.json({ matrix, contributorCount });
+    res.json({ matrix, contextByType, contributorCount });
   } catch (err) {
     next(err);
   }
@@ -231,9 +318,10 @@ export async function decisionSupport(req: Request, res: Response, next: NextFun
 }
 
 // Engine 7: Benchmarking
+// Fix 2: add outcomesByType (Sections G + H) aggregation and return it
 export async function benchmarking(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const [distributions, esgByType, contributorCount] = await Promise.all([
+    const [distributions, esgByType, outcomesByType, contributorCount] = await Promise.all([
       ProjectTemplate.aggregate([
         { $lookup: { from: 'projects', localField: 'project', foreignField: '_id', as: 'projectDoc' } },
         { $unwind: '$projectDoc' },
@@ -241,15 +329,12 @@ export async function benchmarking(_req: Request, res: Response, next: NextFunct
         {
           $group: {
             _id: { projectType: '$projectDoc.projectType', indicatorName: '$sectionB.indicatorName', category: '$sectionB.category', unit: '$sectionB.unit' },
-            sectionGOutcomes: { $push: '$sectionG.outcomesAchieved' },
-            stakeholderPositiveImpacts: { $push: '$sectionH.positiveImpacts' },
             projectCount: { $sum: 1 },
             projectIds: { $addToSet: '$project' },
           },
         },
         { $sort: { '_id.projectType': 1, '_id.category': 1 } },
       ]),
-      // ESG coverage depth by project type — powers the stacked bar chart
       ProjectTemplate.aggregate([
         { $lookup: { from: 'projects', localField: 'project', foreignField: '_id', as: 'projectDoc' } },
         { $unwind: '$projectDoc' },
@@ -270,10 +355,49 @@ export async function benchmarking(_req: Request, res: Response, next: NextFunct
         },
         { $sort: { '_id': 1 } },
       ]),
+      // Fix 2: environmental and social outcomes by project type (Sections G + H)
+      ProjectTemplate.aggregate([
+        { $lookup: { from: 'projects', localField: 'project', foreignField: '_id', as: 'projectDoc' } },
+        { $unwind: '$projectDoc' },
+        {
+          $group: {
+            _id: '$projectDoc.projectType',
+            envOutcomes: { $push: '$sectionG.outcomesAchieved' },
+            measurementMethods: { $addToSet: '$sectionG.measurementMethod' },
+            positiveImpacts: { $push: '$sectionH.positiveImpacts' },
+            negativeImpacts: { $push: '$sectionH.negativeImpacts' },
+            projectCount: { $sum: 1 },
+          },
+        },
+        {
+          $addFields: {
+            envOutcomes: {
+              $filter: { input: '$envOutcomes', cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] } },
+            },
+            measurementMethods: {
+              $filter: { input: '$measurementMethods', cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] } },
+            },
+            positiveImpacts: {
+              $filter: { input: '$positiveImpacts', cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] } },
+            },
+            negativeImpacts: {
+              $filter: { input: '$negativeImpacts', cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] } },
+            },
+          },
+        },
+        {
+          $match: {
+            $or: [
+              { 'envOutcomes.0': { $exists: true } },
+              { 'positiveImpacts.0': { $exists: true } },
+            ],
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]),
       engineContributorCount('Benchmarking Engine'),
     ]);
 
-    // Reshape esgByType into { projectType, E, S, G, total, projectCount }
     const esgSummary = esgByType.map((row: { _id: string; categories: { category: string; count: number }[]; projectCount: number }) => {
       const cats = row.categories.reduce<Record<string, number>>((acc, c) => ({ ...acc, [c.category]: c.count }), {});
       return {
@@ -286,7 +410,7 @@ export async function benchmarking(_req: Request, res: Response, next: NextFunct
       };
     });
 
-    res.json({ distributions, esgByProjectType: esgSummary, contributorCount });
+    res.json({ distributions, esgByProjectType: esgSummary, outcomesByType, contributorCount });
   } catch (err) {
     next(err);
   }
@@ -340,6 +464,7 @@ export async function enginesSummary(_req: Request, res: Response, next: NextFun
 }
 
 // Report preview for a single project + framework
+// Fix 4: include Section K engine contributions
 export async function reportPreview(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { projectId, framework } = req.query;
@@ -348,9 +473,10 @@ export async function reportPreview(req: Request, res: Response, next: NextFunct
       return;
     }
 
-    const [project, template] = await Promise.all([
+    const [project, template, engineMap] = await Promise.all([
       Project.findById(projectId).lean(),
       ProjectTemplate.findOne({ project: projectId }).lean(),
+      EngineContributionMap.findOne({ project: projectId }).lean(),
     ]);
 
     if (!project || !template) {
@@ -364,6 +490,11 @@ export async function reportPreview(req: Request, res: Response, next: NextFunct
 
     const relevantIndicators = (template.sectionB ?? []).filter(
       (b) => b.category === 'E' || b.category === 'S' || b.category === 'G'
+    );
+
+    // Fix 4: include Section K insights for engines that were contributed to
+    const engineContributions = (engineMap?.contributions ?? []).filter(
+      (c) => c.contributed && c.mostValuableInsight
     );
 
     res.json({
@@ -382,6 +513,7 @@ export async function reportPreview(req: Request, res: Response, next: NextFunct
       evidence: template.sectionF ?? [],
       environmentalOutcomes: template.sectionG ?? {},
       socialImpacts: template.sectionH ?? {},
+      engineContributions,
     });
   } catch (err) {
     next(err);

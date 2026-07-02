@@ -3,7 +3,6 @@ import { PROJECT_TYPES, OPERATING_ENVIRONMENTS, PROJECT_STATUSES, VALUE_SCALES }
 
 export const createProjectSchema = z.object({
   name: z.string().min(1),
-  referenceCode: z.string().min(1),
   projectType: z.enum(PROJECT_TYPES),
   location: z.string().min(1),
   operatingEnvironment: z.enum(OPERATING_ENVIRONMENTS),

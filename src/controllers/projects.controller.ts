@@ -50,10 +50,25 @@ export async function getProject(req: AuthRequest, res: Response, next: NextFunc
   }
 }
 
+async function generateReferenceCode(): Promise<string> {
+  const year = new Date().getFullYear();
+  const prefix = `UNL-${year}-`;
+  // Count existing codes for this year, then find the first unused slot
+  const existing = await Project.countDocuments({ referenceCode: { $regex: `^${prefix}` } });
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const code = `${prefix}${String(existing + 1 + attempt).padStart(3, '0')}`;
+    const taken = await Project.exists({ referenceCode: code });
+    if (!taken) return code;
+  }
+  // Extremely unlikely fallback
+  return `${prefix}${Date.now().toString().slice(-6)}`;
+}
+
 export async function createProject(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const body = createProjectSchema.parse(req.body);
-    const project = await Project.create(body);
+    const referenceCode = await generateReferenceCode();
+    const project = await Project.create({ ...body, referenceCode });
 
     // Auto-create linked documents, seeding sectionA from the project fields
     await Promise.all([
