@@ -1,4 +1,5 @@
 import { Response, NextFunction } from 'express';
+import { Types } from 'mongoose';
 import { AuthRequest } from '../middleware/auth';
 import { Project, PROJECT_STATUSES, PROJECT_TYPES } from '../models/Project';
 import { ProjectTemplate } from '../models/ProjectTemplate';
@@ -64,16 +65,67 @@ export async function getProject(req: AuthRequest, res: Response, next: NextFunc
   }
 }
 
-// GAP 4c: Admin endpoint to approve a project for anonymised benchmarking
 export async function approveAnonymisation(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
+    const userId = req.user?.id;
     const project = await Project.findByIdAndUpdate(
       req.params['id'],
-      { $set: { anonymisationApproved: true } },
+      {
+        $set: {
+          anonymisationApproved: true,
+          anonymisationApprovedBy: userId,
+          anonymisationApprovedAt: new Date(),
+        },
+      },
       { new: true, runValidators: true }
     );
     if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
     res.json({ message: 'Anonymisation approved', project });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function approveReportDraft(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params as { id: string };
+    const userId = req.user?.id;
+    if (!userId) { res.status(401).json({ error: 'Not authenticated' }); return; }
+
+    const project = await Project.findByIdAndUpdate(
+      id,
+      { $set: { reportApproved: true, reportApprovedBy: userId, reportApprovedAt: new Date() } },
+      { new: true, runValidators: true }
+    );
+    if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
+    res.json({ message: 'Report draft approved', project });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function reviewSubmission(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params as { id: string };
+    const userId = req.user?.id;
+    if (!userId) { res.status(401).json({ error: 'Not authenticated' }); return; }
+
+    const { action, reviewNotes } = req.body as { action: string; reviewNotes?: string };
+    if (action !== 'approve' && action !== 'return') {
+      res.status(400).json({ error: 'action must be "approve" or "return"' });
+      return;
+    }
+
+    const project = await Project.findById(id);
+    if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
+
+    project.status = action === 'approve' ? 'engine-mapped' : 'digitising';
+    project.reviewNotes = reviewNotes ?? '';
+    project.lastReviewedBy = new Types.ObjectId(userId) as unknown as Types.ObjectId;
+    project.lastReviewedAt = new Date();
+    await project.save();
+
+    res.json({ message: action === 'approve' ? 'Submission approved' : 'Submission returned for revision', project });
   } catch (err) {
     next(err);
   }

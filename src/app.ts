@@ -10,6 +10,7 @@ import reportRoutes from './routes/reports';
 import adminRoutes from './routes/admin';
 import regulatoryDefinitionsRoutes from './routes/regulatoryDefinitions'; // GAP 6d
 import engineSnapshotRoutes from './routes/engineSnapshots';               // GAP 7d
+import clientRoutes from './routes/client';                                // Flow B
 
 const app = express();
 
@@ -26,6 +27,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/regulatory-definitions', regulatoryDefinitionsRoutes); // GAP 6d
 app.use('/api/engine-snapshots', engineSnapshotRoutes);               // GAP 7d
+app.use('/api/client', clientRoutes);                                 // Flow B
 
 app.use(errorHandler);
 

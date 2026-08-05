@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, requireRole } from '../middleware/auth';
-import { listUsers, createUser, updateUser, resetPassword, deleteUser } from '../controllers/admin.controller';
+import { listUsers, createUser, updateUser, resetPassword, deleteUser, approveUser } from '../controllers/admin.controller';
 import { exportProjects, exportIndicators } from '../controllers/exports.controller';
 import { backfillSectionA } from '../controllers/admin.controller';
 
@@ -11,6 +11,7 @@ router.use(authenticate, requireRole('admin'));
 router.get('/users', listUsers);
 router.post('/users', createUser);
 router.patch('/users/:id', updateUser);
+router.patch('/users/:id/status', approveUser);
 router.post('/users/:id/reset-password', resetPassword);
 router.delete('/users/:id', deleteUser);
 

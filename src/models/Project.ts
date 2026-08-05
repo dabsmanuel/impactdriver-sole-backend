@@ -38,9 +38,26 @@ export const PROJECT_STATUSES = [
   'extraction-in-progress',
   'engine-mapped',
   'signed-off',
+  // Flow B statuses
+  'client-submitted',
+  'ai-classified',
+  'esg-validated',
+  'report-ready',
 ] as const;
 
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
+
+export type ProjectSource = 'flow-a' | 'flow-b';
+
+export interface ESGClassification {
+  taxonomyMatches: { category: string; subcategory: string; confidence: 'high' | 'medium' | 'low' }[];
+  applicableStandards: string[];
+  esgScores: { E: number; S: number; G: number };
+  riskLevel: 'high' | 'medium' | 'low';
+  applicableIndicators: string[];
+  benchmarkPosition: 'above-average' | 'average' | 'below-average';
+  classifiedAt: Date;
+}
 
 export const VALUE_SCALES = ['micro', 'small', 'medium', 'large', 'major'] as const;
 export type ValueScale = (typeof VALUE_SCALES)[number];
@@ -60,6 +77,7 @@ export interface IProject extends Document {
   description: string;
   dataReadinessTier: 1 | 2 | 3;
   status: ProjectStatus;
+  source: ProjectSource;
   availableDocs: {
     reports: boolean;
     monitoringData: boolean;
@@ -67,7 +85,24 @@ export interface IProject extends Document {
     photographs: boolean;
     drawings: boolean;
   };
-  anonymisationApproved: boolean; // GAP 4a
+  anonymisationApproved: boolean;
+  anonymisationApprovedBy?: Types.ObjectId;
+  anonymisationApprovedAt?: Date;
+  reviewNotes?: string;
+  lastReviewedBy?: Types.ObjectId;
+  lastReviewedAt?: Date;
+  reportApproved?: boolean;
+  reportApprovedBy?: Types.ObjectId;
+  reportApprovedAt?: Date;
+  // Flow B fields
+  esgClassification?: ESGClassification;
+  esgLeadValidated?: boolean;
+  esgLeadValidatedBy?: Types.ObjectId;
+  esgLeadValidatedAt?: Date;
+  esgLeadNotes?: string;
+  clientReportReady?: boolean;
+  clientReportReadyAt?: Date;
+  clientReportReadyBy?: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -90,6 +125,7 @@ const ProjectSchema = new Schema<IProject>(
     description: { type: String, required: true },
     dataReadinessTier: { type: Number, required: true, enum: [1, 2, 3] },
     status: { type: String, required: true, enum: PROJECT_STATUSES, default: 'inventoried' },
+    source: { type: String, enum: ['flow-a', 'flow-b'], default: 'flow-a' },
     availableDocs: {
       reports: { type: Boolean, default: false },
       monitoringData: { type: Boolean, default: false },
@@ -97,7 +133,35 @@ const ProjectSchema = new Schema<IProject>(
       photographs: { type: Boolean, default: false },
       drawings: { type: Boolean, default: false },
     },
-    anonymisationApproved: { type: Boolean, default: false }, // GAP 4a
+    anonymisationApproved: { type: Boolean, default: false },
+    anonymisationApprovedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    anonymisationApprovedAt: { type: Date },
+    reviewNotes: { type: String, default: '' },
+    lastReviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    lastReviewedAt: { type: Date },
+    reportApproved: { type: Boolean, default: false },
+    reportApprovedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    reportApprovedAt: { type: Date },
+    // Flow B
+    esgClassification: {
+      type: {
+        taxonomyMatches: [{ category: String, subcategory: String, confidence: String }],
+        applicableStandards: [String],
+        esgScores: { E: Number, S: Number, G: Number },
+        riskLevel: String,
+        applicableIndicators: [String],
+        benchmarkPosition: String,
+        classifiedAt: Date,
+      },
+      default: undefined,
+    },
+    esgLeadValidated: { type: Boolean, default: false },
+    esgLeadValidatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    esgLeadValidatedAt: { type: Date },
+    esgLeadNotes: { type: String },
+    clientReportReady: { type: Boolean, default: false },
+    clientReportReadyAt: { type: Date },
+    clientReportReadyBy: { type: Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }
 );

@@ -69,15 +69,15 @@ export async function createSnapshot(
  */
 export async function listSnapshots(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { engine } = req.query;
-    if (!engine) {
-      res.status(400).json({ error: 'engine query parameter is required' });
-      return;
-    }
+    const { engine, activeOnly } = req.query;
 
-    const snapshots = await EngineSnapshot.find({ engine })
+    const filter: Record<string, unknown> = {};
+    if (engine) filter['engine'] = engine;
+    if (activeOnly === 'true') filter['isActive'] = true;
+
+    const snapshots = await EngineSnapshot.find(filter)
       .select('-data')
-      .sort({ version: -1 })
+      .sort({ engine: 1, version: -1 })
       .lean();
 
     res.json({ snapshots });

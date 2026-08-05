@@ -4,12 +4,31 @@ import { Project } from '../models/Project';
 import { ProjectTemplate } from '../models/ProjectTemplate';
 import type { UserRole } from '../models/User';
 
-const SAFE_FIELDS = 'email name role createdAt updatedAt';
+const SAFE_FIELDS = 'email name role company status createdAt updatedAt';
 
-export async function listUsers(_req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function listUsers(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const users = await User.find({}, SAFE_FIELDS).sort({ createdAt: -1 }).lean();
+    const { status } = req.query;
+    const filter: Record<string, unknown> = {};
+    if (status) filter['status'] = status;
+    const users = await User.find(filter, SAFE_FIELDS).sort({ createdAt: -1 }).lean();
     res.json({ users, total: users.length });
+  } catch (err) { next(err); }
+}
+
+export async function approveUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params;
+    const { action } = req.body as { action: 'approve' | 'suspend' | 'reactivate' };
+    const statusMap = { approve: 'active', suspend: 'suspended', reactivate: 'active' };
+    if (!statusMap[action]) { res.status(400).json({ error: 'action must be approve, suspend, or reactivate' }); return; }
+    const user = await User.findByIdAndUpdate(
+      id,
+      { $set: { status: statusMap[action] } },
+      { new: true, select: SAFE_FIELDS }
+    );
+    if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+    res.json({ user });
   } catch (err) { next(err); }
 }
 

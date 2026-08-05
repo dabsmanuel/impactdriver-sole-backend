@@ -9,12 +9,15 @@ export type UserRole =
   | 'client_data_submitter'   // GAP 5a
   | 'client_executive';       // GAP 5a
 
+export type UserStatus = 'pending' | 'active' | 'suspended';
+
 export interface IUser extends Document {
   email: string;
   password: string;
   name: string;
   role: UserRole;
-  company: string; // GAP 5a
+  company: string;
+  status: UserStatus;
   comparePassword(candidate: string): Promise<boolean>;
 }
 
@@ -28,7 +31,8 @@ const UserSchema = new Schema<IUser>(
       enum: ['uptonville_reviewer', 'impact_driver_analyst', 'steering_committee', 'admin', 'client_data_submitter', 'client_executive'],
       default: 'impact_driver_analyst',
     },
-    company: { type: String, default: '' }, // GAP 5a
+    company: { type: String, default: '' },
+    status: { type: String, enum: ['pending', 'active', 'suspended'], default: 'active' },
   },
   { timestamps: true }
 );

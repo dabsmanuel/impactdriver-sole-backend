@@ -6,6 +6,7 @@ import { EngineContributionMap, ENGINE_NAMES, EngineName } from '../models/Engin
 import { ProjectTemplate } from '../models/ProjectTemplate';
 import { RegulatoryDefinition } from '../models/RegulatoryDefinition';
 import { EngineSnapshot } from '../models/EngineSnapshot';
+import { SignOff } from '../models/SignOff';
 import { createSnapshot } from './engineSnapshot.controller';
 import { stringSimilarity } from '../utils/similarity';
 
@@ -253,6 +254,7 @@ async function stepResolveConflicts(job: IIngestionJob, projectId: string): Prom
 
       const snapshotData = activeSnapshot.data as Record<string, unknown>;
 
+      // sectionB: Indicator Library + Benchmarking — name similarity + unit mismatch
       if (engineName === 'Indicator Library' || engineName === 'Benchmarking Engine') {
         const snapshotEntries = Array.isArray(snapshotData['indicators'])
           ? (snapshotData['indicators'] as Array<{ _id?: { indicatorName?: string; unit?: string } }>)
@@ -263,7 +265,6 @@ async function stepResolveConflicts(job: IIngestionJob, projectId: string): Prom
             const snapName = snapEntry._id?.indicatorName ?? '';
             const similarity = stringSimilarity(projectEntry.indicatorName, snapName);
 
-            // Similarity between 0.5 and 0.85 = potential conflict
             if (similarity >= 0.5 && similarity < 0.85) {
               conflicts.push({
                 engineName,
@@ -275,7 +276,6 @@ async function stepResolveConflicts(job: IIngestionJob, projectId: string): Prom
               });
             }
 
-            // Check unit mismatch on near-identical names
             if (similarity > 0.85 && snapEntry._id?.unit && snapEntry._id.unit !== projectEntry.unit) {
               conflicts.push({
                 engineName,
@@ -289,13 +289,106 @@ async function stepResolveConflicts(job: IIngestionJob, projectId: string): Prom
           }
         }
       }
+
+      // sectionC: Regulatory Rules — regulation standard name similarity
+      if (engineName === 'Regulatory Rules Engine') {
+        const snapRules = Array.isArray(snapshotData['sectionC'])
+          ? (snapshotData['sectionC'] as Array<{ regulationStandard?: string; issuingBody?: string }>)
+          : [];
+
+        for (const projectEntry of template.sectionC) {
+          for (const snapRule of snapRules) {
+            const snapStd = snapRule.regulationStandard ?? '';
+            const similarity = stringSimilarity(projectEntry.regulationStandard, snapStd);
+
+            if (similarity >= 0.5 && similarity < 0.85) {
+              conflicts.push({
+                engineName,
+                field: 'regulationStandard',
+                existingValue: snapStd,
+                newValue: projectEntry.regulationStandard,
+                similarity,
+                resolution: 'pending',
+              });
+            }
+          }
+        }
+      }
+
+      // sectionD: Stakeholder Intelligence — stakeholder group similarity
+      if (engineName === 'Stakeholder Intelligence Engine' || engineName === 'Materiality Engine') {
+        const snapGroups = Array.isArray(snapshotData['sectionD'])
+          ? (snapshotData['sectionD'] as Array<{ stakeholderGroup?: string }>)
+          : [];
+
+        for (const projectEntry of template.sectionD) {
+          for (const snapGroup of snapGroups) {
+            const snapGroupName = snapGroup.stakeholderGroup ?? '';
+            const similarity = stringSimilarity(projectEntry.stakeholderGroup, snapGroupName);
+
+            if (similarity >= 0.5 && similarity < 0.85) {
+              conflicts.push({
+                engineName,
+                field: 'stakeholderGroup',
+                existingValue: snapGroupName,
+                newValue: projectEntry.stakeholderGroup,
+                similarity,
+                resolution: 'pending',
+              });
+            }
+          }
+        }
+        // Only detect once per project entry pair (Stakeholder Intelligence takes precedence)
+        if (engineName === 'Materiality Engine') continue;
+      }
+
+      // sectionE: Decision Support — mitigation measure similarity
+      if (engineName === 'Decision Support Engine') {
+        const snapMeasures = Array.isArray(snapshotData['sectionE'])
+          ? (snapshotData['sectionE'] as Array<{ mitigationMeasure?: string; effectiveness?: string }>)
+          : [];
+
+        for (const projectEntry of template.sectionE) {
+          for (const snapMeasure of snapMeasures) {
+            const snapMeasureName = snapMeasure.mitigationMeasure ?? '';
+            const similarity = stringSimilarity(projectEntry.mitigationMeasure, snapMeasureName);
+
+            if (similarity >= 0.5 && similarity < 0.85) {
+              conflicts.push({
+                engineName,
+                field: 'mitigationMeasure',
+                existingValue: snapMeasureName,
+                newValue: projectEntry.mitigationMeasure,
+                similarity,
+                resolution: 'pending',
+              });
+            }
+
+            // Effectiveness mismatch on near-identical measures
+            if (
+              similarity > 0.85 &&
+              snapMeasure.effectiveness &&
+              snapMeasure.effectiveness !== projectEntry.effectiveness
+            ) {
+              conflicts.push({
+                engineName,
+                field: 'effectiveness',
+                existingValue: snapMeasure.effectiveness,
+                newValue: projectEntry.effectiveness,
+                similarity,
+                resolution: 'pending',
+              });
+            }
+          }
+        }
+      }
     }
 
     // Store conflicts on the job
     job.conflicts = conflicts as IIngestionJob['conflicts'];
 
     const stepRecord = job.steps.find((s) => s.step === step) as StepRecord;
-    stepRecord.inputRef = `template:${projectId}:sectionB`;
+    stepRecord.inputRef = `template:${projectId}:sectionB,sectionC,sectionD,sectionE`;
 
     await markStepComplete(
       job,
@@ -571,6 +664,19 @@ export async function triggerPipeline(req: AuthRequest, res: Response, next: Nex
     const { projectId } = req.params as { projectId: string };
     const userId = req.user?.id;
     if (!userId) { res.status(401).json({ error: 'Not authenticated' }); return; }
+
+    // Spec: aggregation runs only after all parties have signed off
+    const signOff = await SignOff.findOne({ project: projectId }).lean();
+    const allSigned =
+      !!signOff &&
+      signOff.signatures.length > 0 &&
+      signOff.signatures.every((s) => s.signed && !!s.name && !!s.date);
+    if (!allSigned) {
+      res.status(409).json({
+        error: 'Pipeline cannot be triggered until all three parties have signed off (Section L).',
+      });
+      return;
+    }
 
     const job = await IngestionJob.create({
       project: new Types.ObjectId(projectId),
