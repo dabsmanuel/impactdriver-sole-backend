@@ -5,13 +5,16 @@ export type UserRole =
   | 'uptonville_reviewer'
   | 'impact_driver_analyst'
   | 'steering_committee'
-  | 'admin';
+  | 'admin'
+  | 'client_data_submitter'   // GAP 5a
+  | 'client_executive';       // GAP 5a
 
 export interface IUser extends Document {
   email: string;
   password: string;
   name: string;
   role: UserRole;
+  company: string; // GAP 5a
   comparePassword(candidate: string): Promise<boolean>;
 }
 
@@ -22,9 +25,10 @@ const UserSchema = new Schema<IUser>(
     name: { type: String, required: true, trim: true },
     role: {
       type: String,
-      enum: ['uptonville_reviewer', 'impact_driver_analyst', 'steering_committee', 'admin'],
+      enum: ['uptonville_reviewer', 'impact_driver_analyst', 'steering_committee', 'admin', 'client_data_submitter', 'client_executive'],
       default: 'impact_driver_analyst',
     },
+    company: { type: String, default: '' }, // GAP 5a
   },
   { timestamps: true }
 );

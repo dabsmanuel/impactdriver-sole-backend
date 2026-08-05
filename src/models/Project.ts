@@ -67,6 +67,7 @@ export interface IProject extends Document {
     photographs: boolean;
     drawings: boolean;
   };
+  anonymisationApproved: boolean; // GAP 4a
   createdAt: Date;
   updatedAt: Date;
 }
@@ -96,6 +97,7 @@ const ProjectSchema = new Schema<IProject>(
       photographs: { type: Boolean, default: false },
       drawings: { type: Boolean, default: false },
     },
+    anonymisationApproved: { type: Boolean, default: false }, // GAP 4a
   },
   { timestamps: true }
 );

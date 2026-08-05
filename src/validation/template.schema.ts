@@ -6,6 +6,8 @@ const indicatorEntrySchema = z.object({
   unit: z.string().min(1),
   measurementMethod: z.string().min(1),
   whyItMattered: z.string().min(1),
+  gapFlag: z.boolean().optional().default(false),  // GAP 10b
+  gapNote: z.string().optional().default(''),      // GAP 10b
 });
 
 const regulatoryRuleSchema = z.object({
@@ -13,6 +15,8 @@ const regulatoryRuleSchema = z.object({
   regulationStandard: z.string().min(1),
   issuingBody: z.string().min(1),
   howItApplied: z.string().default(''),
+  gapFlag: z.boolean().optional().default(false),  // GAP 10b
+  gapNote: z.string().optional().default(''),      // GAP 10b
 });
 
 const stakeholderSchema = z.object({
@@ -20,6 +24,8 @@ const stakeholderSchema = z.object({
   interestConcern: z.string().default(''),
   reportingFormatNeeded: z.string().default(''),
   engagementOutcome: z.string().default(''),
+  gapFlag: z.boolean().optional().default(false),  // GAP 10b
+  gapNote: z.string().optional().default(''),      // GAP 10b
 });
 
 const decisionSupportSchema = z.object({
@@ -28,6 +34,8 @@ const decisionSupportSchema = z.object({
   evidenceForRating: z.string().default(''),
   recommendedFuture: z.string().default(''),
   expertReasoning: z.string().default(''),
+  gapFlag: z.boolean().optional().default(false),  // GAP 10b
+  gapNote: z.string().optional().default(''),      // GAP 10b
 });
 
 const evidenceSchema = z.object({
@@ -37,12 +45,16 @@ const evidenceSchema = z.object({
   formatFrequency: z.string().default(''),
   acceptedWithoutDispute: z.boolean(),
   disputeNotes: z.string().optional(),
+  gapFlag: z.boolean().optional().default(false),  // GAP 10b
+  gapNote: z.string().optional().default(''),      // GAP 10b
 });
 
 const disclosureSchema = z.object({
   disclosureTopic: z.string().min(1),
   alignedFramework: z.enum(['GRI', 'ISSB', 'IFC', 'TNFD', 'NUPRC']),
   whyValuable: z.string().default(''),
+  gapFlag: z.boolean().optional().default(false),  // GAP 10b
+  gapNote: z.string().optional().default(''),      // GAP 10b
 });
 
 const sectionGSchema = z.object({

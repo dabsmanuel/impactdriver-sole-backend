@@ -13,6 +13,8 @@ export interface IndicatorEntry {
   unit: string;
   measurementMethod: string;
   whyItMattered: string;
+  gapFlag: boolean;   // GAP 10a
+  gapNote: string;    // GAP 10a
 }
 
 export interface RegulatoryRuleEntry {
@@ -21,6 +23,8 @@ export interface RegulatoryRuleEntry {
   regulationStandard: string;
   issuingBody: string;
   howItApplied: string;
+  gapFlag: boolean;   // GAP 10a
+  gapNote: string;    // GAP 10a
 }
 
 export interface StakeholderEntry {
@@ -29,6 +33,8 @@ export interface StakeholderEntry {
   interestConcern: string;
   reportingFormatNeeded: string;
   engagementOutcome: string;
+  gapFlag: boolean;   // GAP 10a
+  gapNote: string;    // GAP 10a
 }
 
 export interface DecisionSupportEntry {
@@ -38,6 +44,8 @@ export interface DecisionSupportEntry {
   evidenceForRating: string;
   recommendedFuture: string;
   expertReasoning: string;
+  gapFlag: boolean;   // GAP 10a
+  gapNote: string;    // GAP 10a
 }
 
 export interface EvidenceEntry {
@@ -48,6 +56,8 @@ export interface EvidenceEntry {
   formatFrequency: string;
   acceptedWithoutDispute: boolean;
   disputeNotes?: string;
+  gapFlag: boolean;   // GAP 10a
+  gapNote: string;    // GAP 10a
 }
 
 export interface SectionG {
@@ -69,6 +79,8 @@ export interface DisclosureEntry {
   disclosureTopic: string;
   alignedFramework: DisclosureFramework;
   whyValuable: string;
+  gapFlag: boolean;   // GAP 10a
+  gapNote: string;    // GAP 10a
 }
 
 export interface SectionJ {
@@ -133,6 +145,8 @@ const IndicatorEntrySchema = new Schema<IndicatorEntry>({
   unit: { type: String, required: true },
   measurementMethod: { type: String, required: true },
   whyItMattered: { type: String, required: true },
+  gapFlag: { type: Boolean, default: false }, // GAP 10a
+  gapNote: { type: String, default: '' },     // GAP 10a
 });
 
 const RegulatoryRuleSchema = new Schema<RegulatoryRuleEntry>({
@@ -140,6 +154,8 @@ const RegulatoryRuleSchema = new Schema<RegulatoryRuleEntry>({
   regulationStandard: { type: String, required: true },
   issuingBody: { type: String, required: true },
   howItApplied: { type: String, required: true },
+  gapFlag: { type: Boolean, default: false }, // GAP 10a
+  gapNote: { type: String, default: '' },     // GAP 10a
 });
 
 const StakeholderSchema = new Schema<StakeholderEntry>({
@@ -147,6 +163,8 @@ const StakeholderSchema = new Schema<StakeholderEntry>({
   interestConcern: { type: String, required: true },
   reportingFormatNeeded: { type: String, required: true },
   engagementOutcome: { type: String, required: true },
+  gapFlag: { type: Boolean, default: false }, // GAP 10a
+  gapNote: { type: String, default: '' },     // GAP 10a
 });
 
 const DecisionSupportSchema = new Schema<DecisionSupportEntry>({
@@ -155,6 +173,8 @@ const DecisionSupportSchema = new Schema<DecisionSupportEntry>({
   evidenceForRating: { type: String, required: true },
   recommendedFuture: { type: String, required: true },
   expertReasoning: { type: String, required: true },
+  gapFlag: { type: Boolean, default: false }, // GAP 10a
+  gapNote: { type: String, default: '' },     // GAP 10a
 });
 
 const EvidenceSchema = new Schema<EvidenceEntry>({
@@ -164,12 +184,16 @@ const EvidenceSchema = new Schema<EvidenceEntry>({
   formatFrequency: { type: String, required: true },
   acceptedWithoutDispute: { type: Boolean, required: true, default: true },
   disputeNotes: { type: String },
+  gapFlag: { type: Boolean, default: false }, // GAP 10a
+  gapNote: { type: String, default: '' },     // GAP 10a
 });
 
 const DisclosureSchema = new Schema<DisclosureEntry>({
   disclosureTopic: { type: String, required: true },
   alignedFramework: { type: String, required: true, enum: ['GRI', 'ISSB', 'IFC', 'TNFD', 'NUPRC'] },
   whyValuable: { type: String, required: true },
+  gapFlag: { type: Boolean, default: false }, // GAP 10a
+  gapNote: { type: String, default: '' },     // GAP 10a
 });
 
 const ProjectTemplateSchema = new Schema<IProjectTemplate>(

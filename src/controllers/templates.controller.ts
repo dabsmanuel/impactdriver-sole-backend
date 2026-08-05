@@ -6,6 +6,12 @@ import { sectionPayloadSchemas, SectionKey } from '../validation/template.schema
 
 export async function getTemplate(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
+    // GAP 5d: client_executive cannot access template data
+    if (req.user?.role === 'client_executive') {
+      res.status(403).json({ error: 'client_executive role cannot access template data' });
+      return;
+    }
+
     const template = await ProjectTemplate.findOne({ project: req.params['projectId'] }).lean();
     if (!template) { res.status(404).json({ error: 'Template not found' }); return; }
     res.json(template);

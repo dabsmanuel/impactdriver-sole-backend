@@ -25,6 +25,11 @@ export async function listProjects(req: AuthRequest, res: Response, next: NextFu
       if (dateTo) (filter['duration.start'] as Record<string, unknown>)['$lte'] = new Date(dateTo as string);
     }
 
+    // GAP 5c: client roles only see their own company's projects
+    if (req.user?.role === 'client_data_submitter' || req.user?.role === 'client_executive') {
+      filter['client'] = req.user.company;
+    }
+
     const pageNum = Math.max(1, parseInt(page as string, 10));
     const limitNum = Math.min(100, parseInt(limit as string, 10));
     const skip = (pageNum - 1) * limitNum;
@@ -44,7 +49,31 @@ export async function getProject(req: AuthRequest, res: Response, next: NextFunc
   try {
     const project = await Project.findById(req.params['id']).lean();
     if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
+
+    // GAP 5d: client roles may only see their own company's projects
+    if (req.user?.role === 'client_data_submitter' || req.user?.role === 'client_executive') {
+      if (project.client !== req.user.company) {
+        res.status(403).json({ error: 'Access denied: project belongs to a different company' });
+        return;
+      }
+    }
+
     res.json(project);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GAP 4c: Admin endpoint to approve a project for anonymised benchmarking
+export async function approveAnonymisation(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const project = await Project.findByIdAndUpdate(
+      req.params['id'],
+      { $set: { anonymisationApproved: true } },
+      { new: true, runValidators: true }
+    );
+    if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
+    res.json({ message: 'Anonymisation approved', project });
   } catch (err) {
     next(err);
   }

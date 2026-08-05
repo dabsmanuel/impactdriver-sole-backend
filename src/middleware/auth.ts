@@ -9,6 +9,7 @@ export interface AuthRequest extends Request {
     role: UserRole;
     email: string;
     name: string;
+    company: string; // GAP 5b
   };
 }
 
@@ -17,6 +18,7 @@ interface JwtPayload {
   role: UserRole;
   email: string;
   name: string;
+  company: string; // GAP 5b
 }
 
 export function authenticate(req: AuthRequest, res: Response, next: NextFunction): void {
@@ -28,7 +30,7 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
   const token = header.slice(7);
   try {
     const payload = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
-    req.user = { id: payload.id, role: payload.role, email: payload.email, name: payload.name };
+    req.user = { id: payload.id, role: payload.role, email: payload.email, name: payload.name, company: payload.company ?? '' };
     next();
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' });

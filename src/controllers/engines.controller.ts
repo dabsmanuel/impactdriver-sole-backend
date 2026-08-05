@@ -1,8 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
-import { PipelineStage } from 'mongoose';
+import { PipelineStage, Types } from 'mongoose';
 import { ProjectTemplate } from '../models/ProjectTemplate';
 import { Project } from '../models/Project';
 import { EngineContributionMap } from '../models/EngineContributionMap';
+import { EngineSnapshot } from '../models/EngineSnapshot';
 import { stringSimilarity } from '../utils/similarity';
 
 // Fix 5: data-driven contributor count based on actual section content
@@ -45,6 +46,7 @@ export async function projectClassification(_req: Request, res: Response, next: 
             count: { $sum: 1 },
             environments: { $addToSet: '$operatingEnvironment' },
             statuses: { $push: '$status' },
+            projectIds: { $addToSet: { $toString: '$_id' } }, // GAP 3
           },
         },
         { $sort: { count: -1 } },
@@ -73,6 +75,7 @@ export async function regulatoryRules(_req: Request, res: Response, next: NextFu
             category: { $first: '$sectionC.category' },
             applications: { $push: { projectId: '$project', howItApplied: '$sectionC.howItApplied' } },
             projectCount: { $sum: 1 },
+            projectIds: { $addToSet: { $toString: '$project' } }, // GAP 3
           },
         },
         { $sort: { projectCount: -1 } },
@@ -88,6 +91,7 @@ export async function regulatoryRules(_req: Request, res: Response, next: NextFu
             formatFrequencies: { $addToSet: '$sectionF.formatFrequency' },
             totalSubmissions: { $sum: 1 },
             acceptedCount: { $sum: { $cond: ['$sectionF.acceptedWithoutDispute', 1, 0] } },
+            projectIds: { $addToSet: { $toString: '$project' } }, // GAP 3
             disputeNotes: {
               $push: {
                 $cond: [
@@ -115,11 +119,12 @@ export async function regulatoryRules(_req: Request, res: Response, next: NextFu
 }
 
 // Engine 3: Indicator Library
+// GAP 2: also pull sectionG outcomes per projectType as outcomeContext
 export async function indicatorLibrary(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { category, projectType } = req.query;
 
-    const [raw, contributorCount] = await Promise.all([
+    const [raw, outcomeContext, contributorCount] = await Promise.all([
       ProjectTemplate.aggregate([
         { $unwind: '$sectionB' },
         ...(category ? [{ $match: { 'sectionB.category': category } }] : []),
@@ -144,9 +149,58 @@ export async function indicatorLibrary(req: Request, res: Response, next: NextFu
             rationales: { $addToSet: '$sectionB.whyItMattered' },
             projectTypes: { $addToSet: '$projectDoc.projectType' },
             projectCount: { $sum: 1 },
+            projectIds: { $addToSet: { $toString: '$project' } }, // GAP 3
           },
         },
         { $sort: { '_id.category': 1, '_id.indicatorName': 1 } },
+      ]),
+      // GAP 2: sectionG outcomes per projectType
+      ProjectTemplate.aggregate([
+        {
+          $lookup: {
+            from: 'projects',
+            localField: 'project',
+            foreignField: '_id',
+            as: 'projectDoc',
+          },
+        },
+        { $unwind: '$projectDoc' },
+        ...(projectType ? [{ $match: { 'projectDoc.projectType': projectType } }] : []),
+        {
+          $group: {
+            _id: '$projectDoc.projectType',
+            outcomesAchieved: {
+              $push: {
+                $cond: [{ $ne: ['$sectionG.outcomesAchieved', null] }, '$sectionG.outcomesAchieved', '$$REMOVE'],
+              },
+            },
+            measurementMethods: {
+              $addToSet: {
+                $cond: [{ $ne: ['$sectionG.measurementMethod', null] }, '$sectionG.measurementMethod', '$$REMOVE'],
+              },
+            },
+            timeframes: {
+              $addToSet: {
+                $cond: [{ $ne: ['$sectionG.timeframe', null] }, '$sectionG.timeframe', '$$REMOVE'],
+              },
+            },
+            projectIds: { $addToSet: { $toString: '$project' } }, // GAP 3
+          },
+        },
+        {
+          $addFields: {
+            outcomesAchieved: {
+              $filter: { input: '$outcomesAchieved', cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] } },
+            },
+            measurementMethods: {
+              $filter: { input: '$measurementMethods', cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] } },
+            },
+            timeframes: {
+              $filter: { input: '$timeframes', cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] } },
+            },
+          },
+        },
+        { $sort: { _id: 1 } },
       ]),
       engineContributorCount('Indicator Library'),
     ]);
@@ -160,7 +214,8 @@ export async function indicatorLibrary(req: Request, res: Response, next: NextFu
       return { ...entry, isDuplicate };
     });
 
-    res.json({ indicators: withDuplicateFlag, contributorCount });
+    // GAP 2: return outcomeContext alongside indicators
+    res.json({ indicators: withDuplicateFlag, outcomeContext, contributorCount });
   } catch (err) {
     next(err);
   }
@@ -193,12 +248,11 @@ export async function materialityEngine(_req: Request, res: Response, next: Next
             },
             materialTopics: { $addToSet: '$sectionB.indicatorName' },
             // Fix 3: collect unique project IDs, not sum of rows
-            projectIds: { $addToSet: '$project' },
+            projectIds: { $addToSet: { $toString: '$project' } }, // GAP 3 (keep and expose)
           },
         },
         // Fix 3: derive accurate count from the set
         { $addFields: { projectCount: { $size: '$projectIds' } } },
-        { $project: { projectIds: 0 } },
         { $sort: { '_id.projectType': 1, '_id.stakeholderGroup': 1 } },
       ]),
       // Fix 3: G/H context per project type (spec: MAT built from D+G+H)
@@ -218,6 +272,7 @@ export async function materialityEngine(_req: Request, res: Response, next: Next
             envOutcomes: { $push: '$sectionG.outcomesAchieved' },
             positiveImpacts: { $push: '$sectionH.positiveImpacts' },
             negativeImpacts: { $push: '$sectionH.negativeImpacts' },
+            projectIds: { $addToSet: { $toString: '$project' } }, // GAP 3
           },
         },
         {
@@ -256,6 +311,7 @@ export async function stakeholderIntelligence(_req: Request, res: Response, next
             concernsAndInterests: { $addToSet: '$sectionD.interestConcern' },
             engagementOutcomes: { $push: '$sectionD.engagementOutcome' },
             projectCount: { $sum: 1 },
+            projectIds: { $addToSet: { $toString: '$project' } }, // GAP 3
           },
         },
         { $sort: { projectCount: -1 } },
@@ -302,7 +358,7 @@ export async function decisionSupport(req: Request, res: Response, next: NextFun
         recommendedFuture: { $first: '$sectionE.recommendedFuture' },
         evidenceForRating: { $first: '$sectionE.evidenceForRating' },
         projectCount: { $sum: 1 },
-        projectIds: { $push: '$project' },
+        projectIds: { $addToSet: { $toString: '$project' } }, // GAP 3 — expose in output (was $push before)
       },
     });
     pipeline.push({ $sort: { '_id.effectiveness': 1, projectCount: -1 } });
@@ -319,18 +375,21 @@ export async function decisionSupport(req: Request, res: Response, next: NextFun
 
 // Engine 7: Benchmarking
 // Fix 2: add outcomesByType (Sections G + H) aggregation and return it
+// GAP 4b: only include projects with anonymisationApproved: true
 export async function benchmarking(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    // GAP 4b: all three aggregations must filter on anonymisationApproved
     const [distributions, esgByType, outcomesByType, contributorCount] = await Promise.all([
       ProjectTemplate.aggregate([
         { $lookup: { from: 'projects', localField: 'project', foreignField: '_id', as: 'projectDoc' } },
         { $unwind: '$projectDoc' },
+        { $match: { 'projectDoc.anonymisationApproved': true } }, // GAP 4b
         { $unwind: '$sectionB' },
         {
           $group: {
             _id: { projectType: '$projectDoc.projectType', indicatorName: '$sectionB.indicatorName', category: '$sectionB.category', unit: '$sectionB.unit' },
             projectCount: { $sum: 1 },
-            projectIds: { $addToSet: '$project' },
+            projectIds: { $addToSet: { $toString: '$project' } }, // GAP 3
           },
         },
         { $sort: { '_id.projectType': 1, '_id.category': 1 } },
@@ -338,12 +397,13 @@ export async function benchmarking(_req: Request, res: Response, next: NextFunct
       ProjectTemplate.aggregate([
         { $lookup: { from: 'projects', localField: 'project', foreignField: '_id', as: 'projectDoc' } },
         { $unwind: '$projectDoc' },
+        { $match: { 'projectDoc.anonymisationApproved': true } }, // GAP 4b
         { $unwind: '$sectionB' },
         {
           $group: {
             _id: { projectType: '$projectDoc.projectType', category: '$sectionB.category' },
             indicatorCount: { $sum: 1 },
-            uniqueProjects: { $addToSet: '$project' },
+            uniqueProjects: { $addToSet: { $toString: '$project' } },
           },
         },
         {
@@ -351,6 +411,7 @@ export async function benchmarking(_req: Request, res: Response, next: NextFunct
             _id: '$_id.projectType',
             categories: { $push: { category: '$_id.category', count: '$indicatorCount' } },
             projectCount: { $first: { $size: '$uniqueProjects' } },
+            projectIds: { $push: '$uniqueProjects' }, // gather for flattening
           },
         },
         { $sort: { '_id': 1 } },
@@ -359,6 +420,7 @@ export async function benchmarking(_req: Request, res: Response, next: NextFunct
       ProjectTemplate.aggregate([
         { $lookup: { from: 'projects', localField: 'project', foreignField: '_id', as: 'projectDoc' } },
         { $unwind: '$projectDoc' },
+        { $match: { 'projectDoc.anonymisationApproved': true } }, // GAP 4b
         {
           $group: {
             _id: '$projectDoc.projectType',
@@ -367,6 +429,7 @@ export async function benchmarking(_req: Request, res: Response, next: NextFunct
             positiveImpacts: { $push: '$sectionH.positiveImpacts' },
             negativeImpacts: { $push: '$sectionH.negativeImpacts' },
             projectCount: { $sum: 1 },
+            projectIds: { $addToSet: { $toString: '$project' } }, // GAP 3
           },
         },
         {
@@ -398,8 +461,10 @@ export async function benchmarking(_req: Request, res: Response, next: NextFunct
       engineContributorCount('Benchmarking Engine'),
     ]);
 
-    const esgSummary = esgByType.map((row: { _id: string; categories: { category: string; count: number }[]; projectCount: number }) => {
+    const esgSummary = esgByType.map((row: { _id: string; categories: { category: string; count: number }[]; projectCount: number; projectIds: string[][] }) => {
       const cats = row.categories.reduce<Record<string, number>>((acc, c) => ({ ...acc, [c.category]: c.count }), {});
+      // Flatten nested projectIds arrays
+      const flatProjectIds = Array.from(new Set((row.projectIds ?? []).flat()));
       return {
         projectType: row._id,
         E: cats['E'] ?? 0,
@@ -407,6 +472,7 @@ export async function benchmarking(_req: Request, res: Response, next: NextFunct
         G: cats['G'] ?? 0,
         total: (cats['E'] ?? 0) + (cats['S'] ?? 0) + (cats['G'] ?? 0),
         projectCount: row.projectCount,
+        projectIds: flatProjectIds, // GAP 3
       };
     });
 
@@ -428,6 +494,7 @@ export async function reportingTemplates(_req: Request, res: Response, next: Nex
             topics: { $addToSet: '$sectionI.disclosureTopic' },
             rationales: { $push: '$sectionI.whyValuable' },
             projectCount: { $sum: 1 },
+            projectIds: { $addToSet: { $toString: '$project' } }, // GAP 3
           },
         },
         { $sort: { '_id': 1 } },
@@ -463,8 +530,7 @@ export async function enginesSummary(_req: Request, res: Response, next: NextFun
   }
 }
 
-// Report preview for a single project + framework
-// Fix 4: include Section K engine contributions
+// GAP 9: Report preview — consume engine snapshot outputs instead of raw template data
 export async function reportPreview(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { projectId, framework } = req.query;
@@ -484,15 +550,56 @@ export async function reportPreview(req: Request, res: Response, next: NextFunct
       return;
     }
 
-    const disclosureItems = (template.sectionI ?? []).filter(
-      (d) => d.alignedFramework === framework
-    );
+    const projectIdStr = project._id.toString();
 
-    const relevantIndicators = (template.sectionB ?? []).filter(
-      (b) => b.category === 'E' || b.category === 'S' || b.category === 'G'
-    );
+    // GAP 9: load active snapshots for each relevant engine
+    const relevantEngines = (engineMap?.contributions ?? [])
+      .filter((c) => c.contributed)
+      .map((c) => c.engine);
 
-    // Fix 4: include Section K insights for engines that were contributed to
+    // Load all active snapshots for those engines
+    const snapshotDocs = await EngineSnapshot.find({
+      engine: { $in: relevantEngines },
+      isActive: true,
+    }).lean();
+
+    // Build a map: engineName -> snapshot data filtered to this projectId
+    const engineOutputs: Record<string, unknown[]> = {};
+    for (const snap of snapshotDocs) {
+      const snapData = snap.data as Record<string, unknown>;
+
+      // Each snapshot stores data as an array of entries with projectIds on them
+      // Filter to entries that include this project
+      const filteredEntries = Object.values(snapData).flatMap((val) => {
+        if (!Array.isArray(val)) return [];
+        return (val as Array<Record<string, unknown>>).filter((entry) => {
+          const entryProjectIds = entry['projectIds'];
+          if (!entryProjectIds) return false;
+          if (Array.isArray(entryProjectIds)) {
+            return entryProjectIds.includes(projectIdStr);
+          }
+          return false;
+        });
+      });
+
+      engineOutputs[snap.engine] = filteredEntries;
+    }
+
+    // GAP 9: build report from engine-curated outputs
+    const disclosureItems = engineOutputs['Reporting Engine'] ?? [];
+    const indicators = engineOutputs['Indicator Library'] ?? [];
+    const regulations = engineOutputs['Regulatory Rules Engine'] ?? [];
+    const stakeholders = engineOutputs['Stakeholder Intelligence Engine'] ?? [];
+    const mitigationMeasures = engineOutputs['Decision Support Engine'] ?? [];
+
+    // Supplement with raw template data when no snapshot available
+    const hasDisclosures = disclosureItems.length > 0;
+    const hasIndicators = indicators.length > 0;
+    const hasRegulations = regulations.length > 0;
+    const hasStakeholders = stakeholders.length > 0;
+    const hasMeasures = mitigationMeasures.length > 0;
+
+    // GAP 9: fix 4 — include Section K insights for engines that were contributed to
     const engineContributions = (engineMap?.contributions ?? []).filter(
       (c) => c.contributed && c.mostValuableInsight
     );
@@ -504,12 +611,19 @@ export async function reportPreview(req: Request, res: Response, next: NextFunct
         framework,
         generatedAt: new Date().toISOString(),
         preparedBy: 'Impact Driver × Uptonville Nigeria Limited',
+        source: snapshotDocs.length > 0 ? 'engine-snapshots' : 'raw-template',
       },
-      disclosureItems,
-      indicators: relevantIndicators,
-      regulations: template.sectionC ?? [],
-      stakeholders: template.sectionD ?? [],
-      mitigationMeasures: template.sectionE ?? [],
+      // From snapshots when available, else fallback to raw template
+      disclosureItems: hasDisclosures
+        ? disclosureItems
+        : (template.sectionI ?? []).filter((d) => d.alignedFramework === framework),
+      indicators: hasIndicators
+        ? indicators
+        : (template.sectionB ?? []).filter((b) => b.category === 'E' || b.category === 'S' || b.category === 'G'),
+      regulations: hasRegulations ? regulations : (template.sectionC ?? []),
+      stakeholders: hasStakeholders ? stakeholders : (template.sectionD ?? []),
+      mitigationMeasures: hasMeasures ? mitigationMeasures : (template.sectionE ?? []),
+      // GAP 9: G + H are narrative sections with no engine — always use raw template data
       evidence: template.sectionF ?? [],
       environmentalOutcomes: template.sectionG ?? {},
       socialImpacts: template.sectionH ?? {},
